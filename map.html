@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ManoMaps</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; }
+    #map { height: 100%; width: 100%; }
+    #controls {
+      position: absolute;
+      top: 10px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      background: rgba(255,255,255,0.95);
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      width: 360px;
+    }
+    input, button, select { padding: 6px; margin: 2px; border-radius: 4px; border: 1px solid #ccc; width: calc(100% - 12px); }
+    button { background: #4285F4; color: white; cursor: pointer; }
+    button:hover { background: #357ae8; }
+    #info { margin-top: 5px; font-size: 14px; }
+    #weather { margin-top: 5px; font-size: 14px; background: #eef; padding: 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <input type="text" id="search-input" placeholder="Enter destination">
+    <button id="search-btn">Go</button>
+    <select id="view-select">
+      <option value="street">Street View</option>
+      <option value="satellite">Satellite View</option>
+      <option value="terrain">Terrain View</option>
+    </select>
+    <div id="info">
+      <div id="distance">Distance: N/A</div>
+      <div id="weather">Weather: Sunny, 30°C</div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <script>
+    document.title = "ManoMaps";
+
+    // Map initialization
+    const defaultLatLng = [18.4386, 79.1288]; // Karimnagar
+    const map = L.map('map').setView(defaultLatLng, 13);
+
+    // Layers
+    const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri' });
+    const terrainLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: 'OpenTopoMap' });
+
+    let currentMarker = null;
+    let destMarker = null;
+    let routeLine = null;
+
+    // Current location
+    if(navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(pos=>{
+        const latlng=[pos.coords.latitude,pos.coords.longitude];
+        currentMarker = L.marker(latlng,{icon:L.icon({iconUrl:'https://maps.google.com/mapfiles/ms/icons/blue-dot.png', iconSize:[32,32]})})
+                        .addTo(map).bindPopup("You are here").openPopup();
+        map.setView(latlng, 13);
+      }, ()=>{ console.log("Geolocation unavailable"); });
+    }
+
+    // Search function using Nominatim
+    async function searchLocation(query){
+      try{
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+        const data = await resp.json();
+        if(data && data.length > 0){
+          const loc = [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+          if(destMarker) map.removeLayer(destMarker);
+          destMarker = L.marker(loc, {icon:L.icon({iconUrl:'https://maps.google.com/mapfiles/ms/icons/red-dot.png', iconSize:[32,32]})})
+                        .addTo(map).bindPopup(data[0].display_name).openPopup();
+          map.setView(loc, 15);
+          if(currentMarker) updateDistance(currentMarker.getLatLng(), loc);
+          drawRoute();
+        } else alert("Location not found");
+      } catch(err){ console.log(err); alert("Error fetching location"); }
+    }
+
+    document.getElementById('search-btn').addEventListener('click', ()=>{
+      const query = document.getElementById('search-input').value;
+      if(query) searchLocation(query);
+    });
+    document.getElementById('search-input').addEventListener('keypress', e=>{
+      if(e.key === 'Enter'){
+        const query = document.getElementById('search-input').value;
+        if(query) searchLocation(query);
+      }
+    });
+
+    // Map view toggle
+    document.getElementById('view-select').addEventListener('change', function(){
+      map.eachLayer(layer => map.removeLayer(layer));
+      if(this.value === 'street') streetLayer.addTo(map);
+      else if(this.value === 'satellite') satelliteLayer.addTo(map);
+      else if(this.value === 'terrain') terrainLayer.addTo(map);
+      if(currentMarker) currentMarker.addTo(map);
+      if(destMarker) destMarker.addTo(map);
+      if(routeLine) routeLine.addTo(map);
+    });
+
+    // Distance calculation
+    function updateDistance(from, to){
+      const d = map.distance(from, to) / 1000;
+      document.getElementById('distance').innerHTML = `Distance: ${d.toFixed(2)} km`;
+    }
+
+    // Draw route line
+    function drawRoute(){
+      if(routeLine) map.removeLayer(routeLine);
+      if(currentMarker && destMarker){
+        routeLine = L.polyline([currentMarker.getLatLng(), destMarker.getLatLng()], {color:'blue'}).addTo(map);
+      }
+    }
+
+    // Click to set destination
+    map.on('click', function(e){
+      if(destMarker) map.removeLayer(destMarker);
+      destMarker = L.marker(e.latlng, {icon:L.icon({iconUrl:'https://maps.google.com/mapfiles/ms/icons/red-dot.png', iconSize:[32,32]})})
+                    .addTo(map).bindPopup("Destination").openPopup();
+      if(currentMarker) updateDistance(currentMarker.getLatLng(), e.latlng);
+      drawRoute();
+    });
+  </script>
+</body>
+</html>
